@@ -6,7 +6,7 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "scb-dl"
+name = "scb_dl"
 description = "Utilities for downloading scb api data and converting them to parquet"
 authors = [{ name = "Johannes Kasimir" }]
 readme = "README.md"
