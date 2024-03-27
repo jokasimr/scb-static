@@ -1,0 +1,53 @@
+[build-system]
+requires = [
+  "setuptools>=68",
+  "setuptools_scm[toml]>=8.0",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scb-dl"
+description = "Utilities for downloading scb api data and converting them to parquet"
+authors = [{ name = "Johannes Kasimir" }]
+readme = "README.md"
+classifiers = [
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.10"
+
+dependencies = [
+    "requests",
+]
+
+dynamic = ["version"]
+
+[tool.setuptools_scm]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = """
+--strict-config
+--strict-markers
+--import-mode=importlib
+-ra
+-v
+"""
+testpaths = "tests"
+filterwarnings = [
+  "error",
+  'ignore:\n            Sentinel is not a public part of the traitlets API:DeprecationWarning',
+]
+
+[tool.black]
+skip-string-normalization = true
+
+[tool.isort]
+skip_gitignore = true
+profile = "black"
+known_first_party = ["scb_dl"]
