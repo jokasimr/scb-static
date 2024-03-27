@@ -9,7 +9,8 @@ from itertools import product
 import pyarrow as pa
 import pyarrow.parquet as pq
 import requests
-from mcpp import maximize_constrained_partial_product
+
+from .mcpp import maximize_constrained_partial_product
 
 
 class Throttler:
