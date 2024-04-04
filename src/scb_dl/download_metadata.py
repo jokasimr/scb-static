@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import os
+import time
 from functools import partial
 
 import aiohttp
@@ -35,20 +36,41 @@ def to_gc_path(url):
 
 
 async def _main(save, start_from):
+    n_downloaded = 0
+
     async def download_metadata():
         async with aiohttp.ClientSession() as session:
 
             @retry(wait_time=10, max_tries=5, timeout=float('inf'))
             @throttle(interval_seconds=10, max_calls_in_interval=10)
             async def get(url):
-                response = await session.get(url)
-                print(url, response.status)
-                return await response.json()
+                res = await session.get(url)
+                if res.status != 200:
+                    print('x', end='', flush=True)
+                    raise RuntimeError(
+                        'Request failed', res.status, await res.text()
+                    )
+                print('.', end='', flush=True)
+                return await res.json()
 
             async for item in metadata(get, ['/'.join((root, start_from))]):
+                nonlocal n_downloaded
+                n_downloaded += 1
                 yield item
 
+    start = time.time()
     await save(download_metadata())
+    end = time.time()
+
+    print()
+    print(
+        'Total time:',
+        f'{end - start:0.2f}',
+        'No. downloaded:',
+        f'{n_downloaded:0.2f}',
+        'dl/s:',
+        f'{n_downloaded / (end - start):0.2f}',
+    )
 
 
 def main():

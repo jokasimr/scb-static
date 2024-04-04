@@ -2,6 +2,7 @@ import argparse
 import ast
 import asyncio
 import string
+import sys
 from itertools import islice, product
 
 import aiohttp
@@ -161,10 +162,8 @@ async def _main(url, info, path):
         @throttle(interval_seconds=10, max_calls_in_interval=10)
         async def get(query):
             res = await session.post(url, json=query)
-            # print(res.status)
             if res.status != 200:
-                print(await res.text())
-                exit(1)
+                print(res.status, await res.text(), file=sys.stderr)
             return await res.json()
 
         table = await get_data(get, info)

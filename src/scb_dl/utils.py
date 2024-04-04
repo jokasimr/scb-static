@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import sys
 import time
 from collections import deque
 from functools import wraps
@@ -39,7 +40,7 @@ def retry(*, wait_time=1, max_tries=10, timeout=60, exception_type=Exception):
                 try:
                     out = await f(*args, **kwargs)
                 except exception_type as e:
-                    print('retry', tries, e)
+                    print('retry', tries, e, file=sys.stderr)
                     latest_exception = e
                     await asyncio.sleep(wait_time)
                 else:
