@@ -19,14 +19,21 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 dependencies = [
-    "requests",
     "pyarrow",
+    "gcloud-aio-storage",
+    "aiohttp[speedups]",
+    "asyncstdlib",
+    "tqdm",
 ]
 
 dynamic = ["version"]
+
+[project.scripts]
+download_metadata = "scb_dl.download_metadata:main"
+download = "scb_dl.download_data:main"
 
 [tool.setuptools_scm]
 

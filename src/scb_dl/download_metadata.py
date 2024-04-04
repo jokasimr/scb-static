@@ -1,76 +1,76 @@
-import json
+import argparse
+import asyncio
 import os
-import time
-from collections import deque
+from functools import partial
 
-import requests
+import aiohttp
 
-root = "https://api.scb.se/OV0104/v1/doris/sv/ssd"
-base = "api.scb.se"
+from .utils import retry, save_to_gc, save_to_local, throttle
 
-
-class Throttler:
-    def __init__(self, limit, time_limit, wait_time=0.1):
-        self.queue = deque(maxlen=limit)
-        self.wait_time = wait_time
-        self.time_limit = time_limit
-
-    def schedule(self, f, *args, **kwargs):
-        if len(self.queue) == self.queue.maxlen:
-            while time.time() - self.queue[0] <= self.time_limit:
-                print("waiting..")
-                time.sleep(self.wait_time)
-
-        out = f(*args, **kwargs)
-        self.queue.append(time.time())
-        return out
+domain = "https://api.scb.se"
+root = f"{domain}/OV0104/v1/doris/sv/ssd"
 
 
-def to_path(url):
-    return os.path.join(base, *url.removeprefix(root).split("/"), "meta.json")
+async def metadata(get, urls):
+    async def _get(url):
+        data = await get(url)
+        return url, data
 
-
-def get_all_metadata(throttler, urls):
-    for url in urls:
-        if os.path.exists(to_path(url)):
-            with open(to_path(url)) as f:
-                data = json.load(f)
-            print(url, "cached")
-        else:
-            response = throttler.schedule(requests.get, url)
-            print(url, response.status_code)
-            data = response.json()
+    for coro in asyncio.as_completed(list(map(_get, urls))):
+        url, data = await coro
         yield (url, data)
         if isinstance(data, list):
-            suburls = (f'{url}/{el["id"]}' for el in data)
-            yield from get_all_metadata(throttler, suburls)
+            async for item in metadata(
+                get, (f'{url.removesuffix("/")}/{d["id"]}' for d in data)
+            ):
+                yield item
 
 
-def save_metadata():
-    throttler = Throttler(10, 10, wait_time=0.5)
-    for url, data in get_all_metadata(throttler, [root]):
-        os.makedirs(os.path.dirname(to_path(url)), exist_ok=True)
-        with open(to_path(url), "w") as f:
-            json.dump(data, f)
+def to_local_path(base, url):
+    return os.path.join(base, url.removeprefix(domain).strip("/") + '.json')
 
 
-def save_metadata_flat():
-    dirname = "api.scb.se-flat"
-
-    def to_path(url, data):
-        parts = url.removeprefix(root).split("/")
-        if isinstance(data, list):
-            return os.path.join(dirname, "_".join(parts[-1:]) + ".json")
-        return os.path.join(dirname, "_".join(parts[-2:]) + ".json")
-
-    throttler = Throttler(10, 10, wait_time=0.5)
-    os.makedirs(dirname)
-    for url, data in get_all_metadata(throttler, [root]):
-        path = to_path(url, data)
-        with open(path, "w") as f:
-            if not isinstance(data, list):
-                data["url"] = url
-            json.dump(data, f)
+def to_gc_path(url):
+    return url.removeprefix(domain).strip("/") + '.json'
 
 
-save_metadata_flat()
+async def _main(save, start_from):
+    async def download_metadata():
+        async with aiohttp.ClientSession() as session:
+
+            @retry(wait_time=10, max_tries=5, timeout=float('inf'))
+            @throttle(interval_seconds=10, max_calls_in_interval=10)
+            async def get(url):
+                response = await session.get(url)
+                print(url, response.status)
+                return await response.json()
+
+            async for item in metadata(get, ['/'.join((root, start_from))]):
+                yield item
+
+    await save(download_metadata())
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog='scb-download-meta',
+        description=(
+            'Downloads meta data from the SCB api '
+            'and stores it locally or in google cloud storage',
+        ),
+    )
+    parser.add_argument('--bucket-name', default='api-scb-se')
+    parser.add_argument('--dir-name', default='api.scb.se')
+    parser.add_argument('--remote', action='store_true', default=False)
+    parser.add_argument(
+        '--start-from', type=lambda v: v.strip('/'), default=''
+    )
+    args = parser.parse_args()
+    asyncio.run(
+        _main(
+            partial(save_to_gc, args.bucket_name, to_gc_path)
+            if args.remote
+            else partial(save_to_local, partial(to_local_path, args.dir_name)),
+            args.start_from,
+        )
+    )
