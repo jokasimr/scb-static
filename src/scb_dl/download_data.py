@@ -3,28 +3,29 @@ import ast
 import asyncio
 import string
 import sys
+import tempfile
+from functools import partial
 from itertools import islice, product
 
 import aiohttp
 import pyarrow as pa
 import pyarrow.parquet as pq
 from asyncstdlib.functools import reduce
+from gcloud.aio.storage import Storage
 from tqdm import tqdm
 
 from .mcpp import maximize_constrained_partial_product
-from .utils import read_info_gc, read_info_local, retry, throttle
+from .utils import read_info_gc, retry, throttle
+
+domain = 'https://api.scb.se'
 
 
 def batched(iterable, n):
-    # batched('ABCDEFG', 3) → ABC DEF G
     if n < 1:
         raise ValueError('n must be at least one')
     it = iter(iterable)
     while batch := tuple(islice(it, n)):
         yield batch
-
-
-domain = 'https://api.scb.se'
 
 
 def url_from_table_path(table_path):
@@ -34,22 +35,29 @@ def url_from_table_path(table_path):
 def parse_value(info, column, value):
     if value == '..':
         return None
-
     if column['type'] == 'c':
         return ast.literal_eval(value)
-
     if column['type'] == 't':
         try:
             return int(value)
         except Exception:
             pass
-
     var = next(
         var for var in info['variables'] if var['code'] == column['code']
     )
     index = var['values'].index(value)
     assert index >= 0
     return var['valueTexts'][index]
+
+
+def parse_name(name):
+    name = name.lower()
+    for c, r in zip('åäö', 'aao'):
+        name = name.replace(c, r)
+    name = name.replace(' ', '_')
+    return ''.join(
+        c for c in name if c in (string.digits + string.ascii_letters + '_')
+    )
 
 
 async def _get_data(get, info, set_variables):
@@ -88,14 +96,16 @@ async def _get_data(get, info, set_variables):
         ]
         for i, column in enumerate(data['columns'])
     ]
-
-    names = [
-        ''.join(
-            ch
-            for ch in column['text'].replace(' ', '_')
-            if ch in (string.digits + string.ascii_letters + '_')
-        )
+    columns += [
+        [row['key'][i] for row in data['data']]
         for i, column in enumerate(data['columns'])
+        if column['type'] != 'c'
+    ]
+    names = [parse_name(column['text']) for column in data['columns']]
+    names += [
+        parse_name(column['text']) + '__code'
+        for column in data['columns']
+        if column['type'] != 'c'
     ]
     return pa.table(columns, names=names)
 
@@ -138,14 +148,18 @@ async def get_data(get, info):
             dict(zip(codes_to_iterate_over, values)),
         )
 
+    # optimal_download_time =
+    # table_size / (max_size_per_request * requests_per_second)
+    print('optimal download time [s]:', table_size / (100_000 * 1))
+
     with tqdm(total=table_rows) as pbar:
 
         async def merge(table, tasks):
-            old = table
+            new = table
             for chunk in asyncio.as_completed(tasks):
                 chunk = await chunk
-                new = pa.concat_tables((old, chunk)) if old else chunk
-                pbar.update(len(new) - (len(old) if old else 0))
+                new = pa.concat_tables((new, chunk)) if new else chunk
+                pbar.update(len(chunk))
             return new
 
         return await reduce(
@@ -155,19 +169,53 @@ async def get_data(get, info):
         )
 
 
-async def _main(url, info, path):
+async def _main(repo, table_prefix):
     async with aiohttp.ClientSession() as session:
 
         @retry(wait_time=10, max_tries=5, timeout=float('inf'))
-        @throttle(interval_seconds=10, max_calls_in_interval=10)
-        async def get(query):
+        @throttle(interval_seconds=10, max_calls_in_interval=9)
+        async def get(url, query):
             res = await session.post(url, json=query)
             if res.status != 200:
-                print(res.status, await res.text(), file=sys.stderr)
+                print(res.status, await res.text(), query, file=sys.stderr)
             return await res.json()
 
-        table = await get_data(get, info)
-    pq.write_table(table, path)
+        async for name, info in list_tables(
+            repo.removeprefix('gs://'), table_prefix
+        ):
+            print(name)
+            table = await get_data(
+                partial(get, url_from_table_path(name)), info
+            )
+
+            with tempfile.NamedTemporaryFile() as f:
+                pq.write_table(table, f.name)
+
+                async with Storage() as client:
+                    await client.upload_from_filename(
+                        'scb-v1',
+                        '_'.join(name.strip('/').split('/')[-2:]) + '.parquet',
+                        f.name,
+                    )
+
+
+async def list_tables(bucket, prefix):
+    async with Storage() as client:
+        params = dict(prefix=prefix)
+        while True:
+            response = await client.list_objects(bucket, params=params)
+            for item in response['items']:
+                table = item['name'].removesuffix('.json')
+                info = await read_info_gc(bucket, table)
+                if isinstance(info, list):
+                    # Not a table
+                    continue
+                yield table, info
+
+            if (pagetoken := response.get('nextPageToken')) is None:
+                break
+            else:
+                params['pageToken'] = pagetoken
 
 
 def main():
@@ -178,18 +226,13 @@ def main():
             'and stores it locally or in google cloud storage',
         ),
     )
-    parser.add_argument('--bucket-name', default='api-scb-se')
-    parser.add_argument('--dir-name', default='api.scb.se')
+    parser.add_argument('--info-dir', default='gs://api-scb-se')
     parser.add_argument('--remote', action='store_true', default=False)
     parser.add_argument('--table', type=lambda v: v.strip('/'), default='')
-    parser.add_argument('--path', default='example.parquet')
     args = parser.parse_args()
     asyncio.run(
         _main(
-            url_from_table_path(args.table),
-            read_info_gc(args.bucket_name, args.table)
-            if args.remote
-            else read_info_local(args.dir_name, args.table),
-            args.path,
+            args.info_dir,
+            args.table,
         )
     )
