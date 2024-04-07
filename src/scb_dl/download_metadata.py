@@ -42,11 +42,13 @@ async def _main(save, start_from):
         async with aiohttp.ClientSession() as session:
 
             @retry(wait_time=10, max_tries=5, timeout=float('inf'))
-            @throttle(interval_seconds=10, max_calls_in_interval=10)
+            @throttle(interval_seconds=10, max_calls_in_interval=9)
             async def get(url):
                 res = await session.get(url)
                 if res.status != 200:
                     print('x', end='', flush=True)
+                    print()
+                    print(url)
                     raise RuntimeError(
                         'Request failed', res.status, await res.text()
                     )
@@ -78,7 +80,7 @@ def main():
         prog='scb-download-meta',
         description=(
             'Downloads meta data from the SCB api '
-            'and stores it locally or in google cloud storage',
+            'and stores it locally or in google cloud storage'
         ),
     )
     parser.add_argument('--bucket-name', default='api-scb-se')

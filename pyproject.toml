@@ -32,7 +32,7 @@ dependencies = [
 dynamic = ["version"]
 
 [project.scripts]
-download_metadata = "scb_dl.download_metadata:main"
+download-meta = "scb_dl.download_metadata:main"
 download = "scb_dl.download_data:main"
 
 [tool.setuptools_scm]
