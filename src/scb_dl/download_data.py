@@ -158,7 +158,13 @@ async def get_data(get, info):
             new = table
             for chunk in asyncio.as_completed(tasks):
                 chunk = await chunk
-                new = pa.concat_tables((new, chunk)) if new else chunk
+                new = (
+                    pa.concat_tables(
+                        (new, chunk), promote_options="permissive"
+                    )
+                    if new
+                    else chunk
+                )
                 pbar.update(len(chunk))
             return new
 

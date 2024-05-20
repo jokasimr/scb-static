@@ -76,7 +76,7 @@ async def save_to_gc(bucket_name, to_path, docs):
         async with asyncio.TaskGroup() as tg:
             async for url, doc in docs:
                 tg.create_task(
-                    client.upload(
+                    retry()(client.upload)(
                         bucket_name,
                         to_path(url),
                         json.dumps(doc),
@@ -91,5 +91,7 @@ def read_info_local(directory, table_path):
 
 async def read_info_gc(bucket, table_path):
     async with Storage() as client:
-        data = await client.download(bucket, table_path.strip('/') + '.json')
+        data = await retry()(client.download)(
+            bucket, table_path.strip('/') + '.json'
+        )
         return json.loads(data)
