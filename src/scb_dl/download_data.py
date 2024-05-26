@@ -32,7 +32,7 @@ def url_from_table_path(table_path):
     return domain.strip('/') + '/' + table_path.strip('/')
 
 
-def parse_value(info, column, value):
+def parse_value(lookup, info, column, value):
     if value == '..':
         return None
     if column['type'] == 'c':
@@ -42,12 +42,7 @@ def parse_value(info, column, value):
             return int(value)
         except Exception:
             pass
-    var = next(
-        var for var in info['variables'] if var['code'] == column['code']
-    )
-    index = var['values'].index(value)
-    assert index >= 0
-    return var['valueTexts'][index]
+    return lookup[column['code']][value]
 
 
 def parse_name(name):
@@ -89,9 +84,13 @@ async def _get_data(get, info, set_variables):
         'response': {'format': 'json'},
     }
     data = await get(query)
+    _lookup = {
+        var['code']: dict(zip(var['values'], var['valueTexts']))
+        for var in info['variables']
+    }
     columns = [
         [
-            parse_value(info, column, (row['key'] + row['values'])[i])
+            parse_value(_lookup, info, column, (row['key'] + row['values'])[i])
             for row in data['data']
         ]
         for i, column in enumerate(data['columns'])
@@ -134,11 +133,15 @@ async def get_data(get, info):
             tuple(key_field_lengths.values()), 100_000 // value_fields
         )
 
-    codes_to_iterate_over = [
-        info['variables'][d]['code'] for d in dimensions_to_iterate_over
-    ]
+    _key_codes = list(key_field_lengths.keys())
+    codes_to_iterate_over = [_key_codes[d] for d in dimensions_to_iterate_over]
     values_in_each_chunk = product(
-        *(info['variables'][d]['values'] for d in dimensions_to_iterate_over)
+        *(
+            next(var for var in info["variables"] if var["code"] == code)[
+                "values"
+            ]
+            for code in codes_to_iterate_over
+        )
     )
 
     async def get_chunk(values):
@@ -162,7 +165,7 @@ async def get_data(get, info):
                     pa.concat_tables(
                         (new, chunk), promote_options="permissive"
                     )
-                    if new
+                    if new is not None
                     else chunk
                 )
                 pbar.update(len(chunk))
