@@ -1,7 +1,11 @@
 import argparse
 import ast
 import asyncio
+import json
+import os
+import shutil
 import string
+import subprocess
 import sys
 import tempfile
 from functools import partial
@@ -9,15 +13,11 @@ from itertools import islice, product
 
 import aiohttp
 import pyarrow as pa
-import pyarrow.parquet as pq
-from asyncstdlib.functools import reduce
-from gcloud.aio.storage import Storage
+import pyarrow.dataset as pds
 from tqdm import tqdm
 
 from .mcpp import maximize_constrained_partial_product
-from .utils import read_info_gc, retry, throttle
-
-domain = 'https://api.scb.se'
+from .utils import retry, throttle
 
 
 def batched(iterable, n):
@@ -29,7 +29,8 @@ def batched(iterable, n):
 
 
 def url_from_table_path(table_path):
-    return domain.strip('/') + '/' + table_path.strip('/')
+    base_url = 'https://api.scb.se'
+    return base_url.strip('/') + '/' + table_path.strip('/')
 
 
 def parse_value(lookup, info, column, value):
@@ -109,7 +110,7 @@ async def _get_data(get, info, set_variables):
     return pa.table(columns, names=names)
 
 
-async def get_data(get, info):
+async def get_data(url, info):
     key_field_lengths = {
         var["code"]: len(var["values"])
         for var in info["variables"]
@@ -144,21 +145,31 @@ async def get_data(get, info):
         )
     )
 
+    @retry(wait_time=10, max_tries=5, timeout=float('inf'))
+    @throttle(interval_seconds=10, max_calls_in_interval=9)
+    async def get(session, url, query):
+        res = await session.post(url, json=query)
+        if res.status != 200:
+            print(res.status, await res.text(), query, file=sys.stderr)
+        return await res.json()
+
     async def get_chunk(values):
-        return await _get_data(
-            get,
-            info,
-            dict(zip(codes_to_iterate_over, values)),
-        )
+        async with aiohttp.ClientSession() as session:
+            return await _get_data(
+                partial(get, session, url),
+                info,
+                dict(zip(codes_to_iterate_over, values)),
+            )
 
     # optimal_download_time =
     # table_size / (max_size_per_request * requests_per_second)
     print('optimal download time [s]:', table_size / (100_000 * 1))
 
-    with tqdm(total=table_rows) as pbar:
+    has_yielded_schema = False
 
-        async def merge(table, tasks):
-            new = table
+    with tqdm(total=table_rows) as pbar:
+        for tasks in batched(map(get_chunk, values_in_each_chunk), n=90):
+            new = None
             for chunk in asyncio.as_completed(tasks):
                 chunk = await chunk
                 new = (
@@ -169,62 +180,81 @@ async def get_data(get, info):
                     else chunk
                 )
                 pbar.update(len(chunk))
-            return new
+            if not has_yielded_schema:
+                yield new.schema
+                has_yielded_schema = True
+            for b in new.to_batches():
+                yield b
 
-        return await reduce(
-            merge,
-            batched(map(get_chunk, values_in_each_chunk), n=5),
-            None,
+
+def syncify(async_chunk_iterator):
+    loop = asyncio.new_event_loop()
+    while True:
+        task = asyncio.ensure_future(anext(async_chunk_iterator), loop=loop)
+        try:
+            yield loop.run_until_complete(task)
+        except StopAsyncIteration:
+            break
+    loop.close()
+
+
+def _main(table_prefix):
+    upload_tasks = []
+
+    def go_through_tasks_remove_done(tasks, final=False):
+        new_tasks = []
+        for dirname, proc in tasks:
+            if final:
+                proc.wait()
+            elif proc.poll() is None:
+                new_tasks.append((dirname, proc))
+                continue
+            shutil.rmtree(dirname)
+        return new_tasks
+
+    for name, info in list_tables(table_prefix):
+        print(name)
+        data = syncify(get_data(url_from_table_path(name), info))
+        dirname = tempfile.mkdtemp()
+        filename = '_'.join(name.strip('/').split('/')[-2:])
+        pds.write_dataset(
+            data,
+            dirname,
+            schema=next(data),
+            basename_template=f'{filename}-{{i}}.parquet',
+            format='parquet',
         )
-
-
-async def _main(repo, table_prefix):
-    async with aiohttp.ClientSession() as session:
-
-        @retry(wait_time=10, max_tries=5, timeout=float('inf'))
-        @throttle(interval_seconds=10, max_calls_in_interval=9)
-        async def get(url, query):
-            res = await session.post(url, json=query)
-            if res.status != 200:
-                print(res.status, await res.text(), query, file=sys.stderr)
-            return await res.json()
-
-        async for name, info in list_tables(
-            repo.removeprefix('gs://'), table_prefix
-        ):
-            print(name)
-            table = await get_data(
-                partial(get, url_from_table_path(name)), info
+        upload_tasks.append(
+            (
+                dirname,
+                subprocess.Popen(
+                    ['/usr/bin/rclone', 'copy', dirname, 'r2:scb-tables']
+                ),
             )
+        )
+        upload_tasks = go_through_tasks_remove_done(upload_tasks)
 
-            with tempfile.NamedTemporaryFile() as f:
-                pq.write_table(table, f.name)
-
-                async with Storage() as client:
-                    await client.upload_from_filename(
-                        'scb-v1',
-                        '_'.join(name.strip('/').split('/')[-2:]) + '.parquet',
-                        f.name,
-                    )
+    go_through_tasks_remove_done(upload_tasks, final=True)
 
 
-async def list_tables(bucket, prefix):
-    async with Storage() as client:
-        params = dict(prefix=prefix)
-        while True:
-            response = await client.list_objects(bucket, params=params)
-            for item in response['items']:
-                table = item['name'].removesuffix('.json')
-                info = await read_info_gc(bucket, table)
-                if isinstance(info, list):
-                    # Not a table
-                    continue
-                yield table, info
-
-            if (pagetoken := response.get('nextPageToken')) is None:
-                break
-            else:
-                params['pageToken'] = pagetoken
+def list_tables(prefix):
+    print('Syncing table metadata... ', end='')
+    subprocess.run(
+        ['/usr/bin/rclone', 'sync', 'r2:scb-meta/api-scb-se', './api-scb-se']
+    )
+    print('done.')
+    for dirpath, _, filenames in os.walk('./api-scb-se'):
+        for filename in filenames:
+            path = os.path.join(dirpath, filename)
+            if prefix in path:
+                with open(path) as f:
+                    info = json.load(f)
+                    if isinstance(info, list):
+                        # Not a table
+                        continue
+                    yield path.removeprefix('./').removeprefix(
+                        'api-scb-se'
+                    ).removesuffix('.json'), info
 
 
 def main():
@@ -235,13 +265,9 @@ def main():
             'and stores it locally or in google cloud storage',
         ),
     )
-    parser.add_argument('--info-dir', default='gs://api-scb-se')
     parser.add_argument('--remote', action='store_true', default=False)
     parser.add_argument('--table', type=lambda v: v.strip('/'), default='')
     args = parser.parse_args()
-    asyncio.run(
-        _main(
-            args.info_dir,
-            args.table,
-        )
+    _main(
+        args.table,
     )
