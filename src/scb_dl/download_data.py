@@ -110,7 +110,7 @@ async def _get_data(get, info, set_variables):
     return pa.table(columns, names=names)
 
 
-async def get_data(url, info):
+async def get_data(get, url, info):
     key_field_lengths = {
         var["code"]: len(var["values"])
         for var in info["variables"]
@@ -144,14 +144,6 @@ async def get_data(url, info):
             for code in codes_to_iterate_over
         )
     )
-
-    @retry(wait_time=10, max_tries=5, timeout=float('inf'))
-    @throttle(interval_seconds=10, max_calls_in_interval=9)
-    async def get(session, url, query):
-        res = await session.post(url, json=query)
-        if res.status != 200:
-            print(res.status, await res.text(), query, file=sys.stderr)
-        return await res.json()
 
     async def get_chunk(values):
         async with aiohttp.ClientSession() as session:
@@ -212,9 +204,17 @@ def _main(table_prefix, sync_metadata):
             shutil.rmtree(dirname)
         return new_tasks
 
+    @retry(wait_time=10, max_tries=5, timeout=float('inf'))
+    @throttle(interval_seconds=10, max_calls_in_interval=9)
+    async def get(session, url, query):
+        res = await session.post(url, json=query)
+        if res.status != 200:
+            print(res.status, await res.text(), query, file=sys.stderr)
+        return await res.json()
+
     for name, info in list_tables(table_prefix, sync_metadata):
         print(name)
-        data = syncify(get_data(url_from_table_path(name), info))
+        data = syncify(get_data(get, url_from_table_path(name), info))
         dirname = tempfile.mkdtemp()
         filename = '_'.join(name.strip('/').split('/')[-2:])
         pds.write_dataset(
