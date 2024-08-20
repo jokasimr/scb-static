@@ -198,7 +198,7 @@ def syncify(async_chunk_iterator):
     loop.close()
 
 
-def _main(table_prefix):
+def _main(table_prefix, sync_metadata):
     upload_tasks = []
 
     def go_through_tasks_remove_done(tasks, final=False):
@@ -212,7 +212,7 @@ def _main(table_prefix):
             shutil.rmtree(dirname)
         return new_tasks
 
-    for name, info in list_tables(table_prefix):
+    for name, info in list_tables(table_prefix, sync_metadata):
         print(name)
         data = syncify(get_data(url_from_table_path(name), info))
         dirname = tempfile.mkdtemp()
@@ -237,10 +237,13 @@ def _main(table_prefix):
     go_through_tasks_remove_done(upload_tasks, final=True)
 
 
-def list_tables(prefix):
-    print('Syncing table metadata... ', end='')
-    subprocess.run(['/usr/bin/rclone', 'copy', 'r2:scb-meta/', './api-scb-se'])
-    print('done.')
+def list_tables(prefix, sync_metadata):
+    if sync_metadata:
+        print('Syncing table metadata... ', end='')
+        subprocess.run(
+            ['/usr/bin/rclone', 'copy', 'r2:scb-meta/', './api-scb-se']
+        )
+        print('done.')
     for dirpath, _, filenames in os.walk('./api-scb-se'):
         for filename in filenames:
             path = os.path.join(dirpath, filename)
@@ -265,7 +268,11 @@ def main():
     )
     parser.add_argument('--remote', action='store_true', default=False)
     parser.add_argument('--table', type=lambda v: v.strip('/'), default='')
+    parser.add_argument(
+        '--no-sync-metadata', action='store_true', default=False
+    )
     args = parser.parse_args()
     _main(
         args.table,
+        not args.no_sync_metadata,
     )
