@@ -1,12 +1,13 @@
 import argparse
 import asyncio
 import os
+import subprocess
 import time
 from functools import partial
 
 import aiohttp
 
-from .utils import retry, save_to_gc, save_to_local, throttle
+from .utils import retry, save_to_local, throttle
 
 domain = "https://api.scb.se"
 root = f"{domain}/OV0104/v1/doris/sv/ssd"
@@ -80,11 +81,10 @@ def main():
         prog='scb-download-meta',
         description=(
             'Downloads meta data from the SCB api '
-            'and stores it locally or in google cloud storage'
+            'and stores it locally and optionally also in the cloud'
         ),
     )
-    parser.add_argument('--bucket-name', default='api-scb-se')
-    parser.add_argument('--dir-name', default='api.scb.se')
+    parser.add_argument('--dir-name', default='api-scb-se')
     parser.add_argument('--remote', action='store_true', default=False)
     parser.add_argument(
         '--start-from', type=lambda v: v.strip('/'), default=''
@@ -92,9 +92,11 @@ def main():
     args = parser.parse_args()
     asyncio.run(
         _main(
-            partial(save_to_gc, args.bucket_name, to_gc_path)
-            if args.remote
-            else partial(save_to_local, partial(to_local_path, args.dir_name)),
+            partial(save_to_local, partial(to_local_path, args.dir_name)),
             args.start_from,
         )
     )
+    if args.remote:
+        subprocess.run(
+            ['/usr/bin/rclone', 'copy', args.dir_name, 'r2:scb-meta/']
+        )

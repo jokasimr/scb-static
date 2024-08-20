@@ -239,9 +239,7 @@ def _main(table_prefix):
 
 def list_tables(prefix):
     print('Syncing table metadata... ', end='')
-    subprocess.run(
-        ['/usr/bin/rclone', 'sync', 'r2:scb-meta/api-scb-se', './api-scb-se']
-    )
+    subprocess.run(['/usr/bin/rclone', 'copy', 'r2:scb-meta/', './api-scb-se'])
     print('done.')
     for dirpath, _, filenames in os.walk('./api-scb-se'):
         for filename in filenames:
