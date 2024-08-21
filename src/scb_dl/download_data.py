@@ -190,7 +190,7 @@ def syncify(async_chunk_iterator):
     loop.close()
 
 
-def _main(table_prefix, sync_metadata):
+def _main(start_from, sync_metadata):
     upload_tasks = []
 
     def go_through_tasks_remove_done(tasks, final=False):
@@ -212,7 +212,7 @@ def _main(table_prefix, sync_metadata):
             print(res.status, await res.text(), query, file=sys.stderr)
         return await res.json()
 
-    for name, info in list_tables(table_prefix, sync_metadata):
+    for name, info in list_tables(start_from, sync_metadata):
         print(name)
         data = syncify(get_data(get, url_from_table_path(name), info))
         dirname = tempfile.mkdtemp()
@@ -237,7 +237,7 @@ def _main(table_prefix, sync_metadata):
     go_through_tasks_remove_done(upload_tasks, final=True)
 
 
-def list_tables(prefix, sync_metadata):
+def list_tables(matching, sync_metadata):
     if sync_metadata:
         print('Syncing table metadata... ', end='')
         subprocess.run(
@@ -247,7 +247,7 @@ def list_tables(prefix, sync_metadata):
     for dirpath, _, filenames in os.walk('./api-scb-se'):
         for filename in filenames:
             path = os.path.join(dirpath, filename)
-            if prefix in path:
+            if matching in path:
                 with open(path) as f:
                     info = json.load(f)
                     if isinstance(info, list):
@@ -267,12 +267,14 @@ def main():
         ),
     )
     parser.add_argument('--remote', action='store_true', default=False)
-    parser.add_argument('--table', type=lambda v: v.strip('/'), default='')
+    parser.add_argument(
+        '--start-from', type=lambda v: v.strip('/'), default=''
+    )
     parser.add_argument(
         '--no-sync-metadata', action='store_true', default=False
     )
     args = parser.parse_args()
     _main(
-        args.table,
+        args.start_from,
         not args.no_sync_metadata,
     )

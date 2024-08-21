@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import random
 import sys
 import time
 from collections import deque
@@ -10,16 +11,25 @@ from gcloud.aio.storage import Storage
 
 
 def throttle(
-    *, interval_seconds, max_calls_in_interval, wait_time_seconds=0.1
+    *,
+    interval_seconds,
+    max_calls_in_interval,
+    wait_time_seconds=0.01,
+    min_time_between_calls=0.05,
 ):
     call_times = deque(maxlen=max_calls_in_interval)
 
     def decorator(f):
         @wraps(f)
         async def wrapper(*args, **kwargs):
-            if len(call_times) == max_calls_in_interval:
-                while time.time() - call_times[0] <= interval_seconds:
-                    await asyncio.sleep(wait_time_seconds)
+            while (
+                len(call_times) == max_calls_in_interval
+                and time.time() - call_times[0] <= interval_seconds
+            ) or (
+                call_times
+                and time.time() - call_times[-1] <= min_time_between_calls
+            ):
+                await asyncio.sleep(wait_time_seconds * random.random())
 
             call_times.append(time.time())
             return await f(*args, **kwargs)
