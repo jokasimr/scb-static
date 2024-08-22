@@ -8,7 +8,6 @@ import string
 import subprocess
 import sys
 import tempfile
-import time
 from functools import partial
 from itertools import islice, product
 
@@ -214,7 +213,6 @@ def _main(start_from, sync_metadata):
     @retry(wait_time=10, max_tries=50, timeout=float('inf'))
     @throttle(interval_seconds=10, max_calls_in_interval=9)
     async def get(session, url, query):
-        print('get called', time.time())
         res = await session.post(url, json=query)
         if res.status != 200:
             print(res.status, await res.text(), query, file=sys.stderr)
