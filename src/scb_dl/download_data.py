@@ -8,6 +8,7 @@ import string
 import subprocess
 import sys
 import tempfile
+import time
 from functools import partial
 from itertools import islice, product
 
@@ -18,6 +19,8 @@ from tqdm import tqdm
 
 from .mcpp import maximize_constrained_partial_product
 from .utils import retry, throttle
+
+MAX_CELLS = 107_762
 
 
 def batched(iterable, n):
@@ -133,9 +136,9 @@ async def get_data(get, url, info):
 
     dimensions_to_iterate_over = ()
 
-    if table_size > 100_000:
+    if table_size > MAX_CELLS:
         dimensions_to_iterate_over = maximize_constrained_partial_product(
-            tuple(key_field_lengths.values()), 100_000 // value_fields
+            tuple(key_field_lengths.values()), MAX_CELLS // value_fields
         )
 
     _key_codes = list(key_field_lengths.keys())
@@ -159,7 +162,7 @@ async def get_data(get, url, info):
 
     # optimal_download_time =
     # table_size / (max_size_per_request * requests_per_second)
-    print('optimal download time [s]:', table_size / (100_000 * 1))
+    print('optimal download time [s]:', table_size / (MAX_CELLS * 1))
 
     has_yielded_schema = False
 
@@ -211,6 +214,7 @@ def _main(start_from, sync_metadata):
     @retry(wait_time=10, max_tries=50, timeout=float('inf'))
     @throttle(interval_seconds=10, max_calls_in_interval=9)
     async def get(session, url, query):
+        print('get called', time.time())
         res = await session.post(url, json=query)
         if res.status != 200:
             print(res.status, await res.text(), query, file=sys.stderr)
