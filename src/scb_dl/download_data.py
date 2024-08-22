@@ -102,6 +102,10 @@ async def _get_data(get, info, set_variables):
         if column['type'] != 'c'
     ]
     names = [parse_name(column['text']) for column in data['columns']]
+    names = [
+        name if name not in names[:i] else f'{name}_varde'
+        for i, name in enumerate(names)
+    ]
     names += [
         parse_name(column['text']) + '__code'
         for column in data['columns']
