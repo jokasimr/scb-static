@@ -14,9 +14,14 @@ def throttle(
     *,
     interval_seconds,
     max_calls_in_interval,
-    wait_time_seconds=0.01,
-    min_time_between_calls=0.05,
+    wait_time_seconds=None,
+    min_time_between_calls=None,
 ):
+    if wait_time_seconds is None:
+        wait_time_seconds = interval_seconds / max_calls_in_interval / 10
+    if min_time_between_calls is None:
+        min_time_between_calls = interval_seconds / max_calls_in_interval / 2
+
     call_times = deque(maxlen=max_calls_in_interval)
 
     def decorator(f):
