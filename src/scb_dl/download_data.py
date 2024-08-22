@@ -204,7 +204,7 @@ def _main(start_from, sync_metadata):
             shutil.rmtree(dirname)
         return new_tasks
 
-    @retry(wait_time=10, max_tries=5, timeout=float('inf'))
+    @retry(wait_time=10, max_tries=50, timeout=float('inf'))
     @throttle(interval_seconds=10, max_calls_in_interval=9)
     async def get(session, url, query):
         res = await session.post(url, json=query)
