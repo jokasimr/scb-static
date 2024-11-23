@@ -210,7 +210,7 @@ def _main(start_from, sync_metadata):
             shutil.rmtree(dirname)
         return new_tasks
 
-    @retry(wait_time=10, max_tries=50, timeout=float('inf'))
+    @retry(wait_time=10, max_tries=10, timeout=float('inf'))
     @throttle(interval_seconds=10, max_calls_in_interval=9)
     async def get(session, url, query):
         res = await session.post(url, json=query)
@@ -220,37 +220,41 @@ def _main(start_from, sync_metadata):
 
     for name, info in list_tables(start_from, sync_metadata):
         print(name)
-        data = syncify(get_data(get, url_from_table_path(name), info))
-        dirname = tempfile.mkdtemp()
-        filename = '_'.join(name.strip('/').split('/')[-2:])
-        pds.write_dataset(
-            data,
-            dirname,
-            schema=next(data),
-            basename_template=f'{filename}-{{i}}.parquet',
-            format='parquet',
-        )
-        upload_tasks.append(
-            (
+        try:
+            data = syncify(get_data(get, url_from_table_path(name), info))
+            dirname = tempfile.mkdtemp()
+            filename = '_'.join(name.strip('/').split('/')[-2:])
+            pds.write_dataset(
+                data,
                 dirname,
-                subprocess.Popen(
-                    ['/usr/bin/rclone', 'copy', dirname, 'r2:scb-tables']
-                ),
+                schema=next(data),
+                basename_template=f'{filename}-{{i}}.parquet',
+                format='parquet',
             )
-        )
-        upload_tasks = go_through_tasks_remove_done(upload_tasks)
+            upload_tasks.append(
+                (
+                    dirname,
+                    subprocess.Popen(
+                        ['/usr/bin/rclone', 'sync', dirname, 'r2:scb-tables']
+                    ),
+                )
+            )
+            upload_tasks = go_through_tasks_remove_done(upload_tasks)
+        except Exception as e:
+            print(f"Failed to collect table {name}", e)
 
     go_through_tasks_remove_done(upload_tasks, final=True)
 
 
 def list_tables(matching, sync_metadata):
+    meta_dir = './api-scb-se'
     if sync_metadata:
         print('Syncing table metadata... ', end='')
         subprocess.run(
-            ['/usr/bin/rclone', 'copy', 'r2:scb-meta/', './api-scb-se']
+            ['/usr/bin/rclone', 'copy', 'r2:scb-meta/', meta_dir]
         )
         print('done.')
-    for dirpath, _, filenames in os.walk('./api-scb-se'):
+    for dirpath, _, filenames in os.walk(meta_dir):
         for filename in filenames:
             path = os.path.join(dirpath, filename)
             if matching in path:
@@ -259,8 +263,8 @@ def list_tables(matching, sync_metadata):
                     if isinstance(info, list):
                         # Not a table
                         continue
-                    yield path.removeprefix('./').removeprefix(
-                        'api-scb-se'
+                    yield path.removeprefix(
+                        meta_dir
                     ).removesuffix('.json'), info
 
 
