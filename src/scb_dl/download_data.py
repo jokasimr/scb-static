@@ -235,7 +235,7 @@ def _main(start_from, sync_metadata):
                 (
                     dirname,
                     subprocess.Popen(
-                        ['/usr/bin/rclone', 'sync', dirname, 'r2:scb-tables']
+                        ['/usr/bin/rclone', 'copy', dirname, 'r2:scb-tables']
                     ),
                 )
             )
