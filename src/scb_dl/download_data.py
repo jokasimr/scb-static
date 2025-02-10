@@ -269,7 +269,7 @@ def main():
         prog='scb-download',
         description=(
             'Downloads table from the SCB api '
-            'and stores it locally or in google cloud storage',
+            'and stores it locally or in google cloud storage'
         ),
     )
     parser.add_argument('--remote', action='store_true', default=False)
