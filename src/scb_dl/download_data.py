@@ -116,7 +116,7 @@ async def _get_data(get, info, set_variables):
     return pa.table(columns, names=names)
 
 
-async def get_data(get, url, info):
+async def get_data(get, url, info, max_download_time):
     key_field_lengths = {
         var["code"]: len(var["values"])
         for var in info["variables"]
@@ -161,7 +161,11 @@ async def get_data(get, url, info):
 
     # optimal_download_time =
     # table_size / (max_size_per_request * requests_per_second)
-    print('optimal download time [s]:', table_size / (MAX_CELLS * 1))
+    optimal_download_time = table_size / (MAX_CELLS * 1)
+    print('optimal download time [s]:', optimal_download_time)
+    if optimal_download_time > max_download_time:
+        yield None
+        return
 
     has_yielded_schema = False
 
@@ -196,7 +200,7 @@ def syncify(async_chunk_iterator):
     loop.close()
 
 
-def _main(start_from, sync_metadata):
+def _main(start_from, sync_metadata, max_download_time_seconds):
     upload_tasks = []
 
     def go_through_tasks_remove_done(tasks, final=False):
@@ -220,13 +224,22 @@ def _main(start_from, sync_metadata):
 
     for name, info in list_tables(start_from, sync_metadata):
         print(name)
-        data = syncify(get_data(get, url_from_table_path(name), info))
+        data = syncify(
+            get_data(
+                get, url_from_table_path(name), info, max_download_time_seconds
+            )
+        )
+        schema = next(data)
+        if schema is None:
+            # The download was canceled because it would take too much time
+            print(name, "canceled because the download time exceeds the limit")
+            continue
         dirname = tempfile.mkdtemp()
         filename = '_'.join(name.strip('/').split('/')[-2:])
         pds.write_dataset(
             data,
             dirname,
-            schema=next(data),
+            schema=schema,
             basename_template=f'{filename}-{{i}}.parquet',
             format='parquet',
         )
@@ -272,6 +285,9 @@ def main():
             'and stores it locally or in google cloud storage'
         ),
     )
+    parser.add_argument(
+        '--max-optimal-download-time-seconds', type=float, default=float('inf')
+    )
     parser.add_argument('--remote', action='store_true', default=False)
     parser.add_argument(
         '--start-from', type=lambda v: v.strip('/'), default=''
@@ -283,4 +299,5 @@ def main():
     _main(
         args.start_from,
         not args.no_sync_metadata,
+        max_download_time_seconds=args.max_optimal_download_time_seconds,
     )
