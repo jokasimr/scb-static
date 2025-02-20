@@ -8,6 +8,7 @@ import string
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from functools import partial
 from itertools import islice, product
 
@@ -223,7 +224,7 @@ def _main(start_from, sync_metadata, max_download_time_seconds):
         return await res.json()
 
     for name, info in list_tables(start_from, sync_metadata):
-        print(name)
+        print(datetime.now().isoformat(), name)
         try:
             data = syncify(
                 get_data(
