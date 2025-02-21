@@ -98,5 +98,5 @@ def main():
     )
     if args.remote:
         subprocess.run(
-            ['/usr/bin/rclone', 'copy', args.dir_name, 'r2:scb-meta/']
+            ['/usr/bin/rclone', 'sync', args.dir_name, 'r2:scb-meta/']
         )
