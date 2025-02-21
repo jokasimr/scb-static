@@ -267,7 +267,7 @@ def list_tables(matching, sync_metadata):
     meta_dir = './api-scb-se'
     if sync_metadata:
         print('Syncing table metadata... ', end='')
-        subprocess.run(['/usr/bin/rclone', 'copy', 'r2:scb-meta/', meta_dir])
+        subprocess.run(['/usr/bin/rclone', 'sync', 'r2:scb-meta/', meta_dir])
         print('done.')
     for dirpath, _, filenames in os.walk(meta_dir):
         for filename in filenames:

@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import os
 import subprocess
+import tempfile
 import time
 from functools import partial
 
@@ -84,7 +85,7 @@ def main():
             'and stores it locally and optionally also in the cloud'
         ),
     )
-    parser.add_argument('--dir-name', default='api-scb-se')
+    parser.add_argument('--dir-name', default=tempfile.mkdtemp())
     parser.add_argument('--remote', action='store_true', default=False)
     parser.add_argument(
         '--start-from', type=lambda v: v.strip('/'), default=''
@@ -97,6 +98,7 @@ def main():
         )
     )
     if args.remote:
+        command = 'sync' if args.start_from == '' else 'clone'
         subprocess.run(
-            ['/usr/bin/rclone', 'sync', args.dir_name, 'r2:scb-meta/']
+            ['/usr/bin/rclone', command, args.dir_name, 'r2:scb-meta/']
         )
